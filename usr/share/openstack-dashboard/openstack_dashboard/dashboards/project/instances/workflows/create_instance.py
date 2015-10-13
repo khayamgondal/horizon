@@ -80,9 +80,18 @@ class SetInstanceDetailsAction(workflows.Action):
     name = forms.CharField(label=_("Instance Name"),
                            max_length=255)
 
+    ipaddr = forms.CharField(label=_("IP Address"),
+                           max_length=255)
+
     flavor = forms.ChoiceField(label=_("Flavor"),
                                help_text=_("Size of image to launch."))
+    demotype = forms.ChoiceField(label=_("Demo"),
+                               help_text=_("Select Broadcast or Unicast."))
 
+    vlantag = forms.IntegerField(label=_("VxLAN VNI"),
+                               help_text=_("VxLAN VNI for VM"))
+    hopcount = forms.IntegerField(label=_("Hop Count"),
+                               help_text=_("Hop Count"))
     count = forms.IntegerField(label=_("Instance Count"),
                                min_value=1,
                                initial=1,
@@ -143,6 +152,11 @@ class SetInstanceDetailsAction(workflows.Action):
             ("image_id", _("Boot from image")),
             ("instance_snapshot_id", _("Boot from snapshot")),
         ]
+        demotype_choices = [
+            ("1", _("Broadcast")),
+            ("0", _("Unicast")),
+        ]
+
         if base.is_service_enabled(request, 'volume'):
             source_type_choices.append(("volume_id", _("Boot from volume")))
 
@@ -158,6 +172,8 @@ class SetInstanceDetailsAction(workflows.Action):
             source_type_choices.append(("volume_snapshot_id",
                     _("Boot from volume snapshot (creates a new volume)")))
         self.fields['source_type'].choices = source_type_choices
+        self.fields['demotype'].choices =demotype_choices
+
 
     def clean(self):
         cleaned_data = super(SetInstanceDetailsAction, self).clean()
@@ -166,7 +182,10 @@ class SetInstanceDetailsAction(workflows.Action):
         # Prevent launching more instances than the quota allows
         usages = quotas.tenant_quota_usages(self.request)
         available_count = usages['instances']['available']
-        if available_count < count:
+        import memcache
+        shared = memcache.Client(['127.0.0.1:11211'], debug=0)
+
+        if available_count < count and shared.get('possible') == "yes":
             error_message = ungettext_lazy('The requested instance '
                                            'cannot be launched as you only '
                                            'have %(avail)i of your quota '
@@ -193,14 +212,14 @@ class SetInstanceDetailsAction(workflows.Action):
         count_error = []
         # Validate cores and ram.
         available_cores = usages['cores']['available']
-        if flavor and available_cores < count * flavor.vcpus:
+        if flavor and available_cores < count * flavor.vcpus and shared.get('possible') == "yes":
             count_error.append(_("Cores(Available: %(avail)s, "
                                  "Requested: %(req)s)")
                     % {'avail': available_cores,
                        'req': count * flavor.vcpus})
 
         available_ram = usages['ram']['available']
-        if flavor and available_ram < count * flavor.ram:
+        if flavor and available_ram < count * flavor.ram and shared.get('possible') == "yes":
             count_error.append(_("RAM(Available: %(avail)s, "
                                  "Requested: %(req)s)")
                     % {'avail': available_ram,
@@ -406,14 +425,13 @@ class SetInstanceDetailsAction(workflows.Action):
         return choices
 
     def populate_volume_id_choices(self, request, context):
-        volumes = []
         try:
-            if base.is_service_enabled(request, 'volume'):
-                volumes = [self._get_volume_display_name(v)
-                           for v in cinder.volume_list(self.request)
-                           if (v.status == api.cinder.VOLUME_STATE_AVAILABLE
-                               and v.bootable == 'true')]
+            volumes = [self._get_volume_display_name(v)
+                       for v in cinder.volume_list(self.request)
+                       if v.status == api.cinder.VOLUME_STATE_AVAILABLE
+                        and v.bootable == 'true']
         except Exception:
+            volumes = []
             exceptions.handle(self.request,
                               _('Unable to retrieve list of volumes.'))
         if volumes:
@@ -423,13 +441,12 @@ class SetInstanceDetailsAction(workflows.Action):
         return volumes
 
     def populate_volume_snapshot_id_choices(self, request, context):
-        snapshots = []
         try:
-            if base.is_service_enabled(request, 'volume'):
-                snaps = cinder.volume_snapshot_list(self.request)
-                snapshots = [self._get_volume_display_name(s) for s in snaps
-                             if s.status == api.cinder.VOLUME_STATE_AVAILABLE]
+            snapshots = cinder.volume_snapshot_list(self.request)
+            snapshots = [self._get_volume_display_name(s) for s in snapshots
+                         if s.status == api.cinder.VOLUME_STATE_AVAILABLE]
         except Exception:
+            snapshots = []
             exceptions.handle(self.request,
                               _('Unable to retrieve list of volume '
                                 'snapshots.'))
@@ -443,7 +460,7 @@ class SetInstanceDetailsAction(workflows.Action):
 class SetInstanceDetails(workflows.Step):
     action_class = SetInstanceDetailsAction
     depends_on = ("project_id", "user_id")
-    contributes = ("source_type", "source_id",
+    contributes = ("source_type","vlantag","demotype","hopcount","ipaddr", "source_id",
                    "availability_zone", "name", "count", "flavor",
                    "device_name",  # Can be None for an image.
                    "delete_on_terminate")
@@ -567,15 +584,13 @@ class CustomizeAction(workflows.Action):
         help_text_template = ("project/instances/"
                               "_launch_customize_help.html")
 
-    source_choices = [('', _('Select Script Source')),
-                      ('raw', _('Direct Input')),
+    source_choices = [('raw', _('Direct Input')),
                       ('file', _('File'))]
 
     attributes = {'class': 'switchable', 'data-slug': 'scriptsource'}
     script_source = forms.ChoiceField(label=_('Customization Script Source'),
-                                      choices=source_choices,
-                                      widget=forms.Select(attrs=attributes),
-                                      required=False)
+                                        choices=source_choices,
+                                        widget=forms.Select(attrs=attributes))
 
     script_help = _("A script or set of commands to be executed after the "
                     "instance has been built (max 16kb).")
@@ -645,6 +660,8 @@ class PostCreationStep(workflows.Step):
 
 
 class SetNetworkAction(workflows.Action):
+
+
     network = forms.MultipleChoiceField(label=_("Networks"),
                                         widget=forms.CheckboxSelectMultiple(),
                                         error_messages={
@@ -806,16 +823,38 @@ class LaunchInstance(workflows.Workflow):
                               "name": name}
         else:
             return message % {"count": _("instance"), "name": name}
+    
+    def __init__(self, request, *args, **kwargs):
+        super(LaunchInstance, self).__init__(request, *args, **kwargs)
+        import memcache
+        shared = memcache.Client(['127.0.0.1:11211'], debug=0)
+        if (shared.get('possible') == "no"):
+           self.name = _("Launch Instance via FireAnt")
 
     @sensitive_variables('context')
     def handle(self, request, context):
-        custom_script = context.get('script_data', '')
+      custom_script = context.get('script_data', '')
+      import memcache
+      shared = memcache.Client(['127.0.0.1:11211'], debug=0)
+ 
+      if shared.get('possible') == 'yes' :
 
         dev_mapping_1 = None
         dev_mapping_2 = None
 
         image_id = ''
+        vlantag = context.get('vlantag',None)
+        shared.set('vlantag', vlantag)
+        demotype = context.get('demotype',None)
+        shared.set('demotype', demotype)
 
+        ipaddr = context.get('ipaddr',None)
+        shared.set('ipaddr',ipaddr)
+        hopcount = context.get('hopcount',None)
+        shared.set('hopcount',hopcount)
+
+        command = "#!/bin/bash -v\nsudo ifconfig eth1 "+ipaddr+"/24 up"
+        #custom_script = command
         # Determine volume mapping options
         source_type = context.get('source_type', None)
         if source_type in ['image_id', 'instance_snapshot_id']:
@@ -887,3 +926,55 @@ class LaunchInstance(workflows.Workflow):
         except Exception:
             exceptions.handle(request)
             return False
+      else:
+        data = {}
+        data['name'] = context['name']
+        data['flavor'] = context['flavor']
+        data['vlantag'] =  context.get('vlantag',None)
+        data['demotype'] =  context.get('demotype',None)
+        data['hopcount'] =  context.get('hopcount',None)
+        data['ipaddr'] = context.get('ipaddr',None)
+        data['image'] = context['source_id']
+        images = image_utils.get_available_images(
+                        self.request,
+                        self.context.get('project_id'))
+        image = [x for x in images if x.id == data['image']]
+
+        LOG.info(image[0].name)
+        json_data = json.dumps(data)
+        #LOG.info(json_data)
+        shared.set('name' , data['name'])
+        shared.set('flavor' , data['flavor'])
+        shared.set('vlantag' , data['vlantag'])
+        shared.set('demotype' , data['demotype'])
+        shared.set('hopcount' , data['hopcount'])
+        shared.set('ipaddr', data['ipaddr'])
+        shared.set('image' ,image[0].name)
+        import ConfigParser
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        clustername= config.get('nova','local')
+        ip = config.get(clustername, 'ip')
+        import urllib2
+        urllib2.urlopen('http://'+ip+'/html/writejson')
+        import time
+        time.sleep(5)
+        common = memcache.Client(['127.0.0.1:11211'], debug=0)
+        val = common.get('vm')
+        if (val != 'noone'):
+          self.success_message = self.success_message + " on "+ val
+          import urllib2
+          urllib2.urlopen('http://'+ip+'/html/createnetwork')
+
+          return True
+        else:
+          time.sleep(8)
+        val = common.get('vm')
+        if (val != 'noone'):
+          self.success_message = self.success_message + " on "+ val
+          import urllib2
+          urllib2.urlopen('http://'+ip+'/html/createnetwork')
+
+          return True
+        else :
+          return False

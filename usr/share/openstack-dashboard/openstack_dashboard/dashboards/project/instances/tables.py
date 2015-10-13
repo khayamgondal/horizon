@@ -78,7 +78,7 @@ def is_deleting(instance):
     return task_state.lower() == "deleting"
 
 
-class TerminateInstance(policy.PolicyTargetMixin, tables.BatchAction):
+class TerminateInstance(tables.BatchAction):
     name = "terminate"
     classes = ("btn-danger",)
     icon = "off"
@@ -105,10 +105,40 @@ class TerminateInstance(policy.PolicyTargetMixin, tables.BatchAction):
         return not is_deleting(instance)
 
     def action(self, request, obj_id):
-        api.nova.server_delete(request, obj_id)
+        import ConfigParser
+        from novaclient import client
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        local = config.get('nova','local')
+        dip=config.get(local, 'ip') # returns 12.2
+        dbase=config.get('sql', 'db') # returns 12.2
+        duser=config.get('sql', 'user') # returns 12.2
+        dpass=config.get('sql', 'pass') # returns 12.2
+        uuid = obj_id
+        import MySQLdb
+        db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+        cur = db.cursor()
+        test=int(config.getint('nova', 'clusters'))
+        local = config.get('nova','local')
+        cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
+        for row in cur.fetchall():
+          #for x in range(1,test+1):
+          #  clname = 'cluster'+str(x)
+          #  if row[0] == clname:
+              if row[0] == local:
+                 api.nova.server_delete(request, obj_id)
+              else :
+                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
+                  nova.servers.delete(uuid)
 
 
-class RebootInstance(policy.PolicyTargetMixin, tables.BatchAction):
+
+
+class RebootInstance(tables.BatchAction):
     name = "reboot"
     classes = ('btn-danger', 'btn-reboot')
     policy_rules = (("compute", "compute:reboot"),)
@@ -138,7 +168,36 @@ class RebootInstance(policy.PolicyTargetMixin, tables.BatchAction):
             return True
 
     def action(self, request, obj_id):
-        api.nova.server_reboot(request, obj_id, soft_reboot=False)
+        import ConfigParser
+        from novaclient import client
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        local = config.get('nova','local')
+        dip=config.get(local, 'ip') # returns 12.2
+        dbase=config.get('sql', 'db') # returns 12.2
+        duser=config.get('sql', 'user') # returns 12.2
+        dpass=config.get('sql', 'pass') # returns 12.2
+        uuid = obj_id
+        import MySQLdb
+        db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+        cur = db.cursor()
+        test=int(config.getint('nova', 'clusters'))
+        local = config.get('nova','local')
+        cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
+        for row in cur.fetchall():
+          #for x in range(1,test+1):
+          #  clname = 'cluster'+str(x)
+          #  if row[0] == clname:
+              if row[0] == local:
+                  api.nova.server_reboot(request, obj_id, soft_reboot=False)
+              else :
+                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
+                  nova.servers.reboot(uuid, reboot_type='HARD')
+
 
 
 class SoftRebootInstance(RebootInstance):
@@ -161,7 +220,36 @@ class SoftRebootInstance(RebootInstance):
         )
 
     def action(self, request, obj_id):
-        api.nova.server_reboot(request, obj_id, soft_reboot=True)
+        import ConfigParser
+        from novaclient import client
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        local = config.get('nova','local')
+        dip=config.get(local, 'ip') # returns 12.2
+        dbase=config.get('sql', 'db') # returns 12.2
+        duser=config.get('sql', 'user') # returns 12.2
+        dpass=config.get('sql', 'pass') # returns 12.2
+        uuid = obj_id
+        import MySQLdb
+        db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+        cur = db.cursor()
+        test=int(config.getint('nova', 'clusters'))
+        local = config.get('nova','local')
+        cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
+        for row in cur.fetchall():
+          #for x in range(1,test+1):
+          #  clname = 'cluster'+str(x)
+          #  if row[0] == clname:
+              if row[0] == local:
+                  api.nova.server_reboot(request, obj_id, soft_reboot=True)
+              else :
+                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
+                  nova.servers.reboot(uuid, reboot_type='SOFT')
+
 
 
 class TogglePause(tables.BatchAction):
@@ -306,9 +394,9 @@ class LaunchLink(tables.LinkAction):
     icon = "cloud-upload"
     policy_rules = (("compute", "compute:create"),)
     ajax = True
-
     def __init__(self, attrs=None, **kwargs):
         kwargs['preempt'] = True
+        kwargs['possible'] = 'yes'
         super(LaunchLink, self).__init__(attrs, **kwargs)
 
     def allowed(self, request, datum):
@@ -320,17 +408,21 @@ class LaunchLink(tables.LinkAction):
             cores_available = limits['maxTotalCores'] \
                 - limits['totalCoresUsed']
             ram_available = limits['maxTotalRAMSize'] - limits['totalRAMUsed']
-
+            import memcache
+            shared = memcache.Client(['127.0.0.1:11211'], debug=0)
+ 
             if instances_available <= 0 or cores_available <= 0 \
                     or ram_available <= 0:
                 if "disabled" not in self.classes:
-                    self.classes = [c for c in self.classes] + ['disabled']
-                    self.verbose_name = string_concat(self.verbose_name, ' ',
-                                                      _("(Quota exceeded)"))
+                    #self.classes = [c for c in self.classes] + ['disabled']
+                    self.verbose_name =  _("(Quota full) Use FireAnt")
+                    shared.set('possible', 'no')
             else:
                 self.verbose_name = _("Launch Instance")
                 classes = [c for c in self.classes if c != "disabled"]
                 self.classes = classes
+                shared.set('possible', 'yes')
+
         except Exception:
             LOG.exception("Failed to retrieve quota information")
             # If we can't get the quota information, leave it to the
@@ -349,7 +441,6 @@ class EditInstance(policy.PolicyTargetMixin, tables.LinkAction):
     classes = ("ajax-modal",)
     icon = "pencil"
     policy_rules = (("compute", "compute:update"),)
-
     def get_link_url(self, project):
         return self._get_link_url(project, 'instance_info')
 
@@ -640,14 +731,8 @@ class UpdateRow(tables.Row):
 
     def get_data(self, request, instance_id):
         instance = api.nova.server_get(request, instance_id)
-        try:
-            instance.full_flavor = api.nova.flavor_get(request,
-                                                       instance.flavor["id"])
-        except Exception:
-            exceptions.handle(request,
-                              _('Unable to retrieve flavor information '
-                                'for instance "%s".') % instance_id,
-                              ignore=True)
+        instance.full_flavor = api.nova.flavor_get(request,
+                                                   instance.flavor["id"])
         error = get_instance_error(instance)
         if error:
             messages.error(request, error)
@@ -657,7 +742,6 @@ class UpdateRow(tables.Row):
 class StartInstance(policy.PolicyTargetMixin, tables.BatchAction):
     name = "start"
     policy_rules = (("compute", "compute:start"),)
-
     @staticmethod
     def action_present(count):
         return ungettext_lazy(
@@ -743,7 +827,98 @@ def get_keyname(instance):
         keyname = instance.key_name
         return keyname
     return _("Not available")
+def get_cluster(instance):
+    import ConfigParser
+    config = ConfigParser.ConfigParser()
+    config.read('/etc/nova/fireant.conf')
+    local = config.get('nova','local')
+    dip=config.get(local, 'ip') # returns 12.2
+    dbase=config.get('sql', 'db') # returns 12.2
+    duser=config.get('sql', 'user') # returns 12.2
+    dpass=config.get('sql', 'pass') # returns 12.2
 
+    uuid = instance.id
+    import MySQLdb
+    db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+    cur = db.cursor()
+    cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
+    for row in cur.fetchall():
+      return row[0]
+
+def get_link(instance):
+    import ConfigParser
+    config = ConfigParser.ConfigParser()
+    config.read('/etc/nova/fireant.conf')
+
+    uuid = instance.id
+    import MySQLdb
+    local = config.get('nova','local')
+    dip=config.get(local, 'ip') # returns 12.2
+    dbase=config.get('sql', 'db') # returns 12.2
+    duser=config.get('sql', 'user') # returns 12.2
+    dpass=config.get('sql', 'pass') # returns 12.2
+    db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+    cur = db.cursor()
+    test=int(config.getint('nova', 'clusters'))
+    cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
+    for row in cur.fetchall():
+      #for x in range(1,test+1):
+      #  clname = 'cluster'+str(x)
+      #  if row[0] == clname:
+          val = config.get(row[0], 'ip')
+          return "http://"+val+"/dashboard/project/instances/"+uuid
+
+   
+
+def get_vlan(instance):
+    import ConfigParser
+    config = ConfigParser.ConfigParser()
+    config.read('/etc/nova/fireant.conf')
+
+    uuid = instance.id
+    import MySQLdb
+    local = config.get('nova','local')
+    dip=config.get(local, 'ip') # returns 12.2
+    dbase=config.get('sql', 'db') # returns 12.2
+    duser=config.get('sql', 'user') # returns 12.2
+    dpass=config.get('sql', 'pass') # returns 12.2
+    db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+    cur = db.cursor()
+    cur.execute ("select vlan from  vms where uuid = " + "\'" + uuid +"\'")
+    for row in cur.fetchall():
+      return row[0]
+def get_vmip(instance):
+    import ConfigParser
+    config = ConfigParser.ConfigParser()
+    config.read('/etc/nova/fireant.conf')
+
+    uuid = instance.id
+    import MySQLdb
+    local = config.get('nova','local')
+    dip=config.get(local, 'ip') # returns 12.2
+    dbase=config.get('sql', 'db') # returns 12.2
+    duser=config.get('sql', 'user') # returns 12.2
+    dpass=config.get('sql', 'pass') # returns 12.2
+    db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+
+    cur = db.cursor()
+    cur.execute ("select ip from  vms where uuid = " + "\'" + uuid +"\'")
+    for row in cur.fetchall():
+      return row[0]
 
 def get_power_state(instance):
     return POWER_STATES.get(getattr(instance, "OS-EXT-STS:power_state", 0), '')
@@ -887,11 +1062,15 @@ class InstancesTable(tables.DataTable):
         ("shelved_offloaded", True),
     )
     name = tables.Column("name",
-                         link=("horizon:project:instances:detail"),
+                         link=get_link,
                          verbose_name=_("Instance Name"))
+    cluster = tables.Column(get_cluster,
+                         verbose_name=_("Cluster Name"))
+    vlan = tables.Column(get_vlan,
+                         verbose_name=_("VxLAN VNI")) 
     image_name = tables.Column("image_name",
                                verbose_name=_("Image Name"))
-    ip = tables.Column(get_ips,
+    ip = tables.Column(get_vmip,
                        verbose_name=_("IP Address"),
                        attrs={'data-type': "ip"})
     size = tables.Column(get_size,

@@ -58,11 +58,73 @@ class IndexView(tables.DataTableView):
         marker = self.request.GET.get(
             project_tables.InstancesTable._meta.pagination_param, None)
         search_opts = self.get_filters({'marker': marker, 'paginate': True})
+        import logging
+        logger = logging.getLogger(__name__)
+        #logger.info('khayam')
+        import ConfigParser
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        local = config.get('nova','local')
+        tenant=config.get(local, 'ip') # returns 12.2
+        from novaclient import client
+        total_clusters = config.get('nova','clusters')
+        connections = list()
+        local = config.get('nova','local')
+        for i in range (1,int (total_clusters)+1):
+            cluster_name = 'cluster'+str(i)
+            if cluster_name != local :
+               connection = client.Client(2,config.get(cluster_name, 'tenant') ,config.get(cluster_name, 'user'),config.get(cluster_name, 'pass'),config.get(cluster_name, 'keystone'))
+               connections.append(connection)
+        servers = list()
+        for connection in connections:
+            server = connection.servers.list(detailed=True, search_opts=None, marker=None, limit=None)
+            servers.append(server)
+        allvms = list()
+        import ConfigParser
+        config = ConfigParser.ConfigParser()
+        config.read('/etc/nova/fireant.conf')
+        import MySQLdb
+        local = config.get('nova','local')
+        dip=config.get(local, 'ip') 
+        dbase=config.get('sql', 'db') 
+        duser=config.get('sql', 'user')
+        dpass=config.get('sql', 'pass')
+        db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+        cur = db.cursor()
+
+        for server in servers:
+            for vm in server:
+                cur.execute ("select * from  vms where uuid = " + "\'" + vm.id +"\'")
+                if cur.rowcount > 0 :
+                   iid = vm.id
+                   iname = vm.name
+                   allvms.append(vm)
+          
         # Gather our instances
         try:
             instances, self._more = api.nova.server_list(
                 self.request,
                 search_opts=search_opts)
+            import ConfigParser
+            config = ConfigParser.ConfigParser()
+            config.read('/etc/nova/fireant.conf')
+
+            import MySQLdb
+            local = config.get('nova','local')
+            dip=config.get(local, 'ip') # returns 12.2
+            dbase=config.get('sql', 'db') # returns 12.2
+            duser=config.get('sql', 'user') # returns 12.2
+            dpass=config.get('sql', 'pass') # returns 12.2
+            db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+            cur = db.cursor()
+
+            instances = instances + allvms #vmlists
         except Exception:
             self._more = False
             instances = []
@@ -89,6 +151,7 @@ class IndexView(tables.DataTableView):
                 # TODO(gabriel): Handle pagination.
                 images, more, prev = api.glance.image_list_detailed(
                     self.request)
+
             except Exception:
                 images = []
                 exceptions.handle(self.request, ignore=True)
@@ -127,7 +190,7 @@ class IndexView(tables.DataTableView):
             filter_string = self.table.get_filter_string()
             if filter_field and filter_string:
                 filters[filter_field] = filter_string
-        return filters
+        return None
 
 
 class LaunchInstanceView(workflows.WorkflowView):
@@ -139,6 +202,15 @@ class LaunchInstanceView(workflows.WorkflowView):
         initial['user_id'] = self.request.user.id
         return initial
 
+    def get_context_data(self, **kwargs):
+        context = super(LaunchInstanceView, self).get_context_data(**kwargs)
+        # Data from URL are always in self.kwargs, here we pass the data
+        # to the template.
+        #context["possible"] = kwargs['possible']
+        # Data contributed by Workflow's Steps are in the
+        # context['workflow'].context list. We can use that in the
+        # template too.
+        return context
 
 def console(request, instance_id):
     try:
@@ -262,10 +334,25 @@ class DetailView(tabs.TabView):
 
     @memoized.memoized_method
     def get_data(self):
-        instance_id = self.kwargs['instance_id']
-
         try:
+            instance_id = self.kwargs['instance_id']
             instance = api.nova.server_get(self.request, instance_id)
+            status_label = [label for (value, label) in
+                            project_tables.STATUS_DISPLAY_CHOICES
+                            if value.lower() ==
+                            (instance.status or '').lower()]
+            if status_label:
+                instance.status_label = status_label[0]
+            else:
+                instance.status_label = instance.status
+            instance.volumes = api.nova.instance_volumes_list(self.request,
+                                                              instance_id)
+            # Sort by device name
+            instance.volumes.sort(key=lambda vol: vol.device)
+            instance.full_flavor = api.nova.flavor_get(
+                self.request, instance.flavor["id"])
+            instance.security_groups = api.network.server_security_groups(
+                self.request, instance_id)
         except Exception:
             redirect = reverse(self.redirect_url)
             exceptions.handle(self.request,
@@ -275,41 +362,6 @@ class DetailView(tabs.TabView):
             # Not all exception types handled above will result in a redirect.
             # Need to raise here just in case.
             raise exceptions.Http302(redirect)
-
-        status_label = [label for (value, label) in
-                        project_tables.STATUS_DISPLAY_CHOICES
-                        if value.lower() == (instance.status or '').lower()]
-        if status_label:
-            instance.status_label = status_label[0]
-        else:
-            instance.status_label = instance.status
-
-        try:
-            instance.volumes = api.nova.instance_volumes_list(self.request,
-                                                              instance_id)
-            # Sort by device name
-            instance.volumes.sort(key=lambda vol: vol.device)
-        except Exception:
-            msg = _('Unable to retrieve volume list for instance '
-                    '"%s".') % instance_id
-            exceptions.handle(self.request, msg, ignore=True)
-
-        try:
-            instance.full_flavor = api.nova.flavor_get(
-                self.request, instance.flavor["id"])
-        except Exception:
-            msg = _('Unable to retrieve flavor information for instance '
-                    '"%s".') % instance_id,
-            exceptions.handle(self.request, msg, ignore=True)
-
-        try:
-            instance.security_groups = api.network.server_security_groups(
-                self.request, instance_id)
-        except Exception:
-            msg = _('Unable to retrieve security groups for instance '
-                    '"%s".') % instance_id
-            exceptions.handle(self.request, msg, ignore=True)
-
         try:
             api.network.servers_update_addresses(self.request, [instance])
         except Exception:
@@ -317,7 +369,6 @@ class DetailView(tabs.TabView):
                 self.request,
                 _('Unable to retrieve IP addresses from Neutron for instance '
                   '"%s".') % instance_id, ignore=True)
-
         return instance
 
     def get_tabs(self, request, *args, **kwargs):
@@ -339,23 +390,17 @@ class ResizeView(workflows.WorkflowView):
         instance_id = self.kwargs['instance_id']
         try:
             instance = api.nova.server_get(self.request, instance_id)
+            flavor_id = instance.flavor['id']
+            flavors = self.get_flavors()
+            if flavor_id in flavors:
+                instance.flavor_name = flavors[flavor_id].name
+            else:
+                flavor = api.nova.flavor_get(self.request, flavor_id)
+                instance.flavor_name = flavor.name
         except Exception:
             redirect = reverse("horizon:project:instances:index")
             msg = _('Unable to retrieve instance details.')
             exceptions.handle(self.request, msg, redirect=redirect)
-        flavor_id = instance.flavor['id']
-        flavors = self.get_flavors()
-        if flavor_id in flavors:
-            instance.flavor_name = flavors[flavor_id].name
-        else:
-            try:
-                flavor = api.nova.flavor_get(self.request, flavor_id)
-                instance.flavor_name = flavor.name
-            except Exception:
-                msg = _('Unable to retrieve flavor information for instance '
-                        '"%s".') % instance_id
-                exceptions.handle(self.request, msg, ignore=True)
-                instance.flavor_name = _("Not available")
         return instance
 
     @memoized.memoized_method
