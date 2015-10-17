@@ -953,8 +953,7 @@ class LaunchInstance(workflows.Workflow):
         import ConfigParser
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
-        clustername= config.get('nova','local')
-        ip = config.get(clustername, 'ip')
+        ip = config.get('Local', 'ip')
         import urllib2
         urllib2.urlopen('http://'+ip+'/html/writejson')
         import time

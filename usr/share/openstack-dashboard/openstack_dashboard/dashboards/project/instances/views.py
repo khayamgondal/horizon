@@ -64,28 +64,28 @@ class IndexView(tables.DataTableView):
         import ConfigParser
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
-        local = config.get('nova','local')
-        tenant=config.get(local, 'ip') # returns 12.2
+        local=config.get('Local', 'ip') 
+        user = config.get('creds','user')
+        tenant = config.get('creds','tenant')
+        passwd = config.get('creds','pass')
+
         from novaclient import client
-        total_clusters = config.get('nova','clusters')
+        total_clusters = config.get('Neighbor','number')
         connections = list()
-        local = config.get('nova','local')
         for i in range (1,int (total_clusters)+1):
-            cluster_name = 'cluster'+str(i)
-            if cluster_name != local :
-               connection = client.Client(2,config.get(cluster_name, 'tenant') ,config.get(cluster_name, 'user'),config.get(cluster_name, 'pass'),config.get(cluster_name, 'keystone'))
-               connections.append(connection)
+            neighbor_name = 'Neighbor'+str(i)
+            neighbor_ip = config.get(neighbor_name,'ip')
+            keystone = "http://"+neighbor_ip+":5000/v2.0/"
+            #if cluster_name != local :
+            connection = client.Client(2,tenant ,user,passwd ,keystone)
+            connections.append(connection)
         servers = list()
         for connection in connections:
             server = connection.servers.list(detailed=True, search_opts=None, marker=None, limit=None)
             servers.append(server)
         allvms = list()
-        import ConfigParser
-        config = ConfigParser.ConfigParser()
-        config.read('/etc/nova/fireant.conf')
         import MySQLdb
-        local = config.get('nova','local')
-        dip=config.get(local, 'ip') 
+        dip=local 
         dbase=config.get('sql', 'db') 
         duser=config.get('sql', 'user')
         dpass=config.get('sql', 'pass')
@@ -94,7 +94,7 @@ class IndexView(tables.DataTableView):
                      passwd=dpass, # your password
                      db=dbase) # name of the data base
         cur = db.cursor()
-
+#Below portion can be removed.. 
         for server in servers:
             for vm in server:
                 cur.execute ("select * from  vms where uuid = " + "\'" + vm.id +"\'")
@@ -108,23 +108,25 @@ class IndexView(tables.DataTableView):
             instances, self._more = api.nova.server_list(
                 self.request,
                 search_opts=search_opts)
-            import ConfigParser
-            config = ConfigParser.ConfigParser()
-            config.read('/etc/nova/fireant.conf')
-
-            import MySQLdb
-            local = config.get('nova','local')
-            dip=config.get(local, 'ip') # returns 12.2
-            dbase=config.get('sql', 'db') # returns 12.2
-            duser=config.get('sql', 'user') # returns 12.2
-            dpass=config.get('sql', 'pass') # returns 12.2
-            db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-            cur = db.cursor()
-
             instances = instances + allvms #vmlists
+
+            #import ConfigParser
+            #config = ConfigParser.ConfigParser()
+            #config.read('/etc/nova/fireant.conf')
+
+            #import MySQLdb
+            #local = config.get('nova','local')
+            #dip=config.get(local, 'ip') # returns 12.2
+            #dbase=config.get('sql', 'db') # returns 12.2
+            #duser=config.get('sql', 'user') # returns 12.2
+            #dpass=config.get('sql', 'pass') # returns 12.2
+            #db = MySQLdb.connect(host=dip, # your host, usually localhost
+            #         user=duser, # your username
+            #         passwd=dpass, # your password
+            #         db=dbase) # name of the data base
+            #cur = db.cursor()
+
+            #instances = instances + allvms #vmlists
         except Exception:
             self._more = False
             instances = []

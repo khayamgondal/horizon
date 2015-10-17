@@ -109,11 +109,14 @@ class TerminateInstance(tables.BatchAction):
         from novaclient import client
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
-        local = config.get('nova','local')
-        dip=config.get(local, 'ip') # returns 12.2
+        dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
         dpass=config.get('sql', 'pass') # returns 12.2
+        user = config.get('creds','user')
+        tenant = config.get('creds','tenant')
+        passwd = config.get('creds','pass')
+
         uuid = obj_id
         import MySQLdb
         db = MySQLdb.connect(host=dip, # your host, usually localhost
@@ -122,19 +125,13 @@ class TerminateInstance(tables.BatchAction):
                      db=dbase) # name of the data base
 
         cur = db.cursor()
-        test=int(config.getint('nova', 'clusters'))
-        local = config.get('nova','local')
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
-          #for x in range(1,test+1):
-          #  clname = 'cluster'+str(x)
-          #  if row[0] == clname:
-              if row[0] == local:
-                 api.nova.server_delete(request, obj_id)
-              else :
-                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
-                  nova.servers.delete(uuid)
-
+            cluster=row[0]
+            cluster_split=cluster.split('_')
+            keystone = "http://"+cluster_split[1]+":5000/v2.0/"
+            nova = client.Client(2,tenant,user, passwd,keystone)
+            nova.servers.delete(uuid)
 
 
 
@@ -172,11 +169,14 @@ class RebootInstance(tables.BatchAction):
         from novaclient import client
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
-        local = config.get('nova','local')
-        dip=config.get(local, 'ip') # returns 12.2
+        dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
         dpass=config.get('sql', 'pass') # returns 12.2
+        user = config.get('creds','user')
+        tenant = config.get('creds','tenant')
+        passwd = config.get('creds','pass')
+
         uuid = obj_id
         import MySQLdb
         db = MySQLdb.connect(host=dip, # your host, usually localhost
@@ -185,18 +185,13 @@ class RebootInstance(tables.BatchAction):
                      db=dbase) # name of the data base
 
         cur = db.cursor()
-        test=int(config.getint('nova', 'clusters'))
-        local = config.get('nova','local')
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
-          #for x in range(1,test+1):
-          #  clname = 'cluster'+str(x)
-          #  if row[0] == clname:
-              if row[0] == local:
-                  api.nova.server_reboot(request, obj_id, soft_reboot=False)
-              else :
-                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
-                  nova.servers.reboot(uuid, reboot_type='HARD')
+            cluster=row[0]
+            cluster_split=cluster.split('_')
+            keystone = "http://"+cluster_split[1]+":5000/v2.0/"
+            nova = client.Client(2,tenant,user, passwd,keystone)
+            nova.servers.reboot(uuid, reboot_type='HARD')
 
 
 
@@ -224,11 +219,14 @@ class SoftRebootInstance(RebootInstance):
         from novaclient import client
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
-        local = config.get('nova','local')
-        dip=config.get(local, 'ip') # returns 12.2
+        dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
         dpass=config.get('sql', 'pass') # returns 12.2
+        user = config.get('creds','user')
+        tenant = config.get('creds','tenant')
+        passwd = config.get('creds','pass')
+
         uuid = obj_id
         import MySQLdb
         db = MySQLdb.connect(host=dip, # your host, usually localhost
@@ -237,18 +235,13 @@ class SoftRebootInstance(RebootInstance):
                      db=dbase) # name of the data base
 
         cur = db.cursor()
-        test=int(config.getint('nova', 'clusters'))
-        local = config.get('nova','local')
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
-          #for x in range(1,test+1):
-          #  clname = 'cluster'+str(x)
-          #  if row[0] == clname:
-              if row[0] == local:
-                  api.nova.server_reboot(request, obj_id, soft_reboot=True)
-              else :
-                  nova = client.Client(2,config.get(row[0], 'tenant') ,config.get(row[0], 'user'),config.get(row[0], 'pass'),config.get(row[0], 'keystone'))
-                  nova.servers.reboot(uuid, reboot_type='SOFT')
+            cluster=row[0]
+            cluster_split=cluster.split('_')
+            keystone = "http://"+cluster_split[1]+":5000/v2.0/"
+            nova = client.Client(2,tenant,user, passwd,keystone)
+            nova.servers.reboot(uuid, reboot_type='SOFT')
 
 
 
@@ -831,11 +824,10 @@ def get_cluster(instance):
     import ConfigParser
     config = ConfigParser.ConfigParser()
     config.read('/etc/nova/fireant.conf')
-    local = config.get('nova','local')
-    dip=config.get(local, 'ip') # returns 12.2
-    dbase=config.get('sql', 'db') # returns 12.2
-    duser=config.get('sql', 'user') # returns 12.2
-    dpass=config.get('sql', 'pass') # returns 12.2
+    dip=config.get('Local', 'ip') 
+    dbase=config.get('sql', 'db') 
+    duser=config.get('sql', 'user') 
+    dpass=config.get('sql', 'pass') 
 
     uuid = instance.id
     import MySQLdb
@@ -856,8 +848,7 @@ def get_link(instance):
 
     uuid = instance.id
     import MySQLdb
-    local = config.get('nova','local')
-    dip=config.get(local, 'ip') # returns 12.2
+    dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
@@ -866,14 +857,11 @@ def get_link(instance):
                      passwd=dpass, # your password
                      db=dbase) # name of the data base
     cur = db.cursor()
-    test=int(config.getint('nova', 'clusters'))
     cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
     for row in cur.fetchall():
-      #for x in range(1,test+1):
-      #  clname = 'cluster'+str(x)
-      #  if row[0] == clname:
-          val = config.get(row[0], 'ip')
-          return "http://"+val+"/dashboard/project/instances/"+uuid
+        cluster = row[0]
+        cluster_ip=cluster.split("_")
+        return "http://"+cluster_ip[1]+"/dashboard/project/instances/"+uuid
 
    
 
@@ -884,8 +872,7 @@ def get_vlan(instance):
 
     uuid = instance.id
     import MySQLdb
-    local = config.get('nova','local')
-    dip=config.get(local, 'ip') # returns 12.2
+    dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
@@ -905,8 +892,7 @@ def get_vmip(instance):
 
     uuid = instance.id
     import MySQLdb
-    local = config.get('nova','local')
-    dip=config.get(local, 'ip') # returns 12.2
+    dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
