@@ -854,7 +854,7 @@ class LaunchInstance(workflows.Workflow):
         shared.set('hopcount',hopcount)
 
         command = "#!/bin/bash -v\nsudo ifconfig eth1 "+ipaddr+"/24 up"
-        #custom_script = command
+        custom_script = command
         # Determine volume mapping options
         source_type = context.get('source_type', None)
         if source_type in ['image_id', 'instance_snapshot_id']:
@@ -962,8 +962,8 @@ class LaunchInstance(workflows.Workflow):
         val = common.get('vm')
         if (val != 'noone'):
           self.success_message = self.success_message + " on "+ val
-          import urllib2
-          urllib2.urlopen('http://'+ip+'/html/createnetwork')
+          #import urllib2
+          #urllib2.urlopen('http://'+ip+'/html/createnetwork')
 
           return True
         else:
@@ -971,8 +971,8 @@ class LaunchInstance(workflows.Workflow):
         val = common.get('vm')
         if (val != 'noone'):
           self.success_message = self.success_message + " on "+ val
-          import urllib2
-          urllib2.urlopen('http://'+ip+'/html/createnetwork')
+          #import urllib2
+          #urllib2.urlopen('http://'+ip+'/html/createnetwork')
 
           return True
         else :

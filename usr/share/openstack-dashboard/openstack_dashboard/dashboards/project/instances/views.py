@@ -68,21 +68,27 @@ class IndexView(tables.DataTableView):
         user = config.get('creds','user')
         tenant = config.get('creds','tenant')
         passwd = config.get('creds','pass')
-
-        from novaclient import client
-        total_clusters = config.get('Neighbor','number')
-        connections = list()
-        for i in range (1,int (total_clusters)+1):
-            neighbor_name = 'Neighbor'+str(i)
-            neighbor_ip = config.get(neighbor_name,'ip')
-            keystone = "http://"+neighbor_ip+":5000/v2.0/"
-            #if cluster_name != local :
-            connection = client.Client(2,tenant ,user,passwd ,keystone)
-            connections.append(connection)
+        import MySQLdb
+        dip=local
+        dbase=config.get('sql', 'db')
+        duser=config.get('sql', 'user')
+        dpass=config.get('sql', 'pass')
+        db = MySQLdb.connect(host=dip, # your host, usually localhost
+                     user=duser, # your username
+                     passwd=dpass, # your password
+                     db=dbase) # name of the data base
+        cur = db.cursor()
+        cur.execute('select cluster from vms')
         servers = list()
-        for connection in connections:
-            server = connection.servers.list(detailed=True, search_opts=None, marker=None, limit=None)
-            servers.append(server)
+        from novaclient import client
+        for row in cur.fetchall():
+            cluster = row[0].split('_')
+            cluster_ip = cluster[1]
+            if cluster_ip != local:
+               keystone = "http://"+cluster_ip+":5000/v2.0/"
+               connection = client.Client(2,tenant ,user,passwd ,keystone)
+               server = connection.servers.list(detailed=True, search_opts=None, marker=None, limit=None)
+               servers.append(server)
         allvms = list()
         import MySQLdb
         dip=local 
@@ -94,7 +100,6 @@ class IndexView(tables.DataTableView):
                      passwd=dpass, # your password
                      db=dbase) # name of the data base
         cur = db.cursor()
-#Below portion can be removed.. 
         for server in servers:
             for vm in server:
                 cur.execute ("select * from  vms where uuid = " + "\'" + vm.id +"\'")
