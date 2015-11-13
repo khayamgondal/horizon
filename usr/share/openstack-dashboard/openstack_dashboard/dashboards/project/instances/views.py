@@ -46,6 +46,16 @@ from openstack_dashboard.dashboards.project.instances \
 from openstack_dashboard.dashboards.project.instances \
     import workflows as project_workflows
 
+import MySQLdb, ConfigParser
+
+
+#This function will return a db connection based on credentials passed as arguments
+def getDBConnection(dip, duser,dpass, dbase):
+    db = MySQLdb.connect(host=dip,
+                         user=duser,
+                         passwd=dpass,
+                         db=dbase)
+    return db
 
 class IndexView(tables.DataTableView):
     table_class = project_tables.InstancesTable
@@ -60,23 +70,18 @@ class IndexView(tables.DataTableView):
         search_opts = self.get_filters({'marker': marker, 'paginate': True})
         import logging
         logger = logging.getLogger(__name__)
-        #logger.info('khayam')
-        import ConfigParser
         config = ConfigParser.ConfigParser()
         config.read('/etc/nova/fireant.conf')
         local=config.get('Local', 'ip') 
         user = config.get('creds','user')
         tenant = config.get('creds','tenant')
         passwd = config.get('creds','pass')
-        import MySQLdb
+
         dip=local
         dbase=config.get('sql', 'db')
         duser=config.get('sql', 'user')
         dpass=config.get('sql', 'pass')
-        db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
+        db = getDBConnection(dip, duser, dpass, dbase)
         cur = db.cursor()
         cur.execute('select cluster from vms')
         servers = list()
@@ -90,48 +95,30 @@ class IndexView(tables.DataTableView):
                server = connection.servers.list(detailed=True, search_opts=None, marker=None, limit=None)
                servers.append(server)
         allvms = list()
-        import MySQLdb
-        dip=local 
+        cur.close()
+        db.close()
+
+        dip=local
         dbase=config.get('sql', 'db') 
         duser=config.get('sql', 'user')
         dpass=config.get('sql', 'pass')
-        db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
+        db = getDBConnection(dip, duser, dpass, dbase)
         cur = db.cursor()
         for server in servers:
             for vm in server:
                 cur.execute ("select * from  vms where uuid = " + "\'" + vm.id +"\'")
                 if cur.rowcount > 0 :
-                   iid = vm.id
-                   iname = vm.name
                    allvms.append(vm)
-          
+        cur.close()
+        db.close()
         # Gather our instances
         try:
             instances, self._more = api.nova.server_list(
                 self.request,
                 search_opts=search_opts)
-            instances = instances + allvms #vmlists
+            instances = instances + allvms #Append Our VMs list into defualt List
 
-            #import ConfigParser
-            #config = ConfigParser.ConfigParser()
-            #config.read('/etc/nova/fireant.conf')
 
-            #import MySQLdb
-            #local = config.get('nova','local')
-            #dip=config.get(local, 'ip') # returns 12.2
-            #dbase=config.get('sql', 'db') # returns 12.2
-            #duser=config.get('sql', 'user') # returns 12.2
-            #dpass=config.get('sql', 'pass') # returns 12.2
-            #db = MySQLdb.connect(host=dip, # your host, usually localhost
-            #         user=duser, # your username
-            #         passwd=dpass, # your password
-            #         db=dbase) # name of the data base
-            #cur = db.cursor()
-
-            #instances = instances + allvms #vmlists
         except Exception:
             self._more = False
             instances = []

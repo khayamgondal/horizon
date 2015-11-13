@@ -45,12 +45,15 @@ from openstack_dashboard.dashboards.project.instances.workflows \
     import update_instance
 from openstack_dashboard import policy
 
+import MySQLdb, ConfigParser
 
 LOG = logging.getLogger(__name__)
 
 ACTIVE_STATES = ("ACTIVE",)
 VOLUME_ATTACH_READY_STATES = ("ACTIVE", "SHUTOFF")
 SNAPSHOT_READY_STATES = ("ACTIVE", "SHUTOFF", "PAUSED", "SUSPENDED")
+
+CONFIG_PATH = "/etc/nova/fireant.conf"
 
 POWER_STATES = {
     0: "NO STATE",
@@ -69,6 +72,18 @@ PAUSE = 0
 UNPAUSE = 1
 SUSPEND = 0
 RESUME = 1
+
+#Read from the config file
+config = ConfigParser.ConfigParser()
+config.read(CONFIG_PATH)
+
+#This function will return a db connection based on credentials passed as arguments
+def getDBConnection(dip, duser,dpass, dbase):
+    db = MySQLdb.connect(host=dip,
+                         user=duser,
+                         passwd=dpass,
+                         db=dbase)
+    return db
 
 
 def is_deleting(instance):
@@ -105,10 +120,8 @@ class TerminateInstance(tables.BatchAction):
         return not is_deleting(instance)
 
     def action(self, request, obj_id):
-        import ConfigParser
         from novaclient import client
-        config = ConfigParser.ConfigParser()
-        config.read('/etc/nova/fireant.conf')
+
         dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
@@ -118,12 +131,7 @@ class TerminateInstance(tables.BatchAction):
         passwd = config.get('creds','pass')
 
         uuid = obj_id
-        import MySQLdb
-        db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+        db = getDBConnection(dip, duser, dpass, dbase)
         cur = db.cursor()
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
@@ -132,7 +140,8 @@ class TerminateInstance(tables.BatchAction):
             keystone = "http://"+cluster_split[1]+":5000/v2.0/"
             nova = client.Client(2,tenant,user, passwd,keystone)
             nova.servers.delete(uuid)
-
+        cur.close()
+        db.close()
 
 
 class RebootInstance(tables.BatchAction):
@@ -165,10 +174,8 @@ class RebootInstance(tables.BatchAction):
             return True
 
     def action(self, request, obj_id):
-        import ConfigParser
         from novaclient import client
-        config = ConfigParser.ConfigParser()
-        config.read('/etc/nova/fireant.conf')
+
         dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
@@ -178,12 +185,7 @@ class RebootInstance(tables.BatchAction):
         passwd = config.get('creds','pass')
 
         uuid = obj_id
-        import MySQLdb
-        db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+        db = getDBConnection(dip, duser, dpass, dbase)
         cur = db.cursor()
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
@@ -192,7 +194,8 @@ class RebootInstance(tables.BatchAction):
             keystone = "http://"+cluster_split[1]+":5000/v2.0/"
             nova = client.Client(2,tenant,user, passwd,keystone)
             nova.servers.reboot(uuid, reboot_type='HARD')
-
+        cur.close()
+        db.close()
 
 
 class SoftRebootInstance(RebootInstance):
@@ -215,10 +218,8 @@ class SoftRebootInstance(RebootInstance):
         )
 
     def action(self, request, obj_id):
-        import ConfigParser
         from novaclient import client
-        config = ConfigParser.ConfigParser()
-        config.read('/etc/nova/fireant.conf')
+
         dip=config.get('Local', 'ip') # returns 12.2
         dbase=config.get('sql', 'db') # returns 12.2
         duser=config.get('sql', 'user') # returns 12.2
@@ -228,12 +229,7 @@ class SoftRebootInstance(RebootInstance):
         passwd = config.get('creds','pass')
 
         uuid = obj_id
-        import MySQLdb
-        db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+        db = getDBConnection(dip, duser, dpass, dbase)
         cur = db.cursor()
         cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
         for row in cur.fetchall():
@@ -242,7 +238,8 @@ class SoftRebootInstance(RebootInstance):
             keystone = "http://"+cluster_split[1]+":5000/v2.0/"
             nova = client.Client(2,tenant,user, passwd,keystone)
             nova.servers.reboot(uuid, reboot_type='SOFT')
-
+        cur.close()
+        db.close()
 
 
 class TogglePause(tables.BatchAction):
@@ -821,41 +818,25 @@ def get_keyname(instance):
         return keyname
     return _("Not available")
 def get_cluster(instance):
-    import ConfigParser
-    config = ConfigParser.ConfigParser()
-    config.read('/etc/nova/fireant.conf')
-    dip=config.get('Local', 'ip') 
+    dip=config.get('Local', 'ip')
     dbase=config.get('sql', 'db') 
     duser=config.get('sql', 'user') 
     dpass=config.get('sql', 'pass') 
 
     uuid = instance.id
-    import MySQLdb
-    db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+    db = getDBConnection(dip, duser, dpass, dbase)
     cur = db.cursor()
     cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
     for row in cur.fetchall():
       return row[0]
 
 def get_link(instance):
-    import ConfigParser
-    config = ConfigParser.ConfigParser()
-    config.read('/etc/nova/fireant.conf')
-
     uuid = instance.id
-    import MySQLdb
     dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
-    db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
+    db = getDBConnection(dip, duser, dpass, dbase)
     cur = db.cursor()
     cur.execute ("select cluster from  vms where uuid = " + "\'" + uuid +"\'")
     for row in cur.fetchall():
@@ -866,41 +847,24 @@ def get_link(instance):
    
 
 def get_vlan(instance):
-    import ConfigParser
-    config = ConfigParser.ConfigParser()
-    config.read('/etc/nova/fireant.conf')
-
     uuid = instance.id
-    import MySQLdb
     dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
-    db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+    db= getDBConnection(dip, duser, dpass, dbase)
     cur = db.cursor()
     cur.execute ("select vlan from  vms where uuid = " + "\'" + uuid +"\'")
     for row in cur.fetchall():
       return row[0]
-def get_vmip(instance):
-    import ConfigParser
-    config = ConfigParser.ConfigParser()
-    config.read('/etc/nova/fireant.conf')
 
+def get_vmip(instance):
     uuid = instance.id
-    import MySQLdb
     dip=config.get('Local', 'ip') # returns 12.2
     dbase=config.get('sql', 'db') # returns 12.2
     duser=config.get('sql', 'user') # returns 12.2
     dpass=config.get('sql', 'pass') # returns 12.2
-    db = MySQLdb.connect(host=dip, # your host, usually localhost
-                     user=duser, # your username
-                     passwd=dpass, # your password
-                     db=dbase) # name of the data base
-
+    db = getDBConnection(dip, duser, dpass, dbase)
     cur = db.cursor()
     cur.execute ("select ip from  vms where uuid = " + "\'" + uuid +"\'")
     for row in cur.fetchall():
